@@ -1,0 +1,21 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node.js
+node_modules/
+
+# Editor and OS files
+.vscode/
+.DS_Store
+
+# Real operational data
+*.db
+data/freight_queries.xlsx
