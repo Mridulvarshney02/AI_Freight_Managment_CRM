@@ -10,6 +10,7 @@ from langchain_core.messages import HumanMessage
 from app.ai.agent import agent
 from app.schemas import ChatRequest, ChatResponse
 from langchain_core.messages import HumanMessage, AIMessage
+from app.procurement import models as procurement_models  # noqa: F401
 from dotenv import load_dotenv
 load_dotenv()
 
