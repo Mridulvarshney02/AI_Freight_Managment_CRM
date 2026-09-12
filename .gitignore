@@ -19,3 +19,9 @@ node_modules/
 # Real operational data
 *.db
 data/freight_queries.xlsx
+data/procurement workbook.xlsx
+data/procurement*.xlsx
+data/PROCUREMENT.xlsx
+data/procurement_catalog.json
+data/contacts*.csv
+data/contacts*.xlsx
