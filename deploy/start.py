@@ -105,6 +105,18 @@ if __name__ == '__main__':
             message = str(original).lower()
 
             checks = [
+                (("invalid sslmode value",),
+                "Invalid sslmode setting; use require without quotes or spaces."),
+                (("server does not support ssl",),
+                "The selected database endpoint does not support SSL."),
+                (("certificate verify failed", "certificate verification failed"),
+                "Database certificate verification failed."),
+                (("ssl syscall error: eof detected",),
+                "Connection closed during SSL negotiation."),
+                (("connection reset by peer",),
+                "Connection reset by the database endpoint or network."),
+                (("ssl error",),
+                "SSL negotiation failed; further diagnosis needed."),
                 (("password authentication failed",), "Database username/password rejected."),
                 (("could not translate host name", "name or service not known"),
                 "Database hostname could not be resolved."),
