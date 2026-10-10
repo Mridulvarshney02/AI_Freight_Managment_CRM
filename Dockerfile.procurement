@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+WORKDIR /srv/app
+COPY deploy/requirements.txt /srv/app/deploy/requirements.txt
+RUN pip install -r deploy/requirements.txt
+RUN useradd --create-home --uid 10001 appuser
+COPY --chown=appuser:appuser app/ /srv/app/app/
+COPY --chown=appuser:appuser frontend/ /srv/app/frontend/
+COPY --chown=appuser:appuser deploy/start.py /srv/app/deploy/start.py
+USER appuser
+EXPOSE 10000
+CMD ["python", "deploy/start.py"]

@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: freight-procurement
+    runtime: docker
+    dockerfilePath: ./Dockerfile.procurement
+    dockerContext: .
+    healthCheckPath: /_stcore/health
+    numInstances: 1
+    envVars:
+      - key: PROCUREMENT_DATABASE_URL
+        sync: false
+      - key: PROCUREMENT_TEAM_PASSWORD
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: PROCUREMENT_SSLMODE
+        value: require

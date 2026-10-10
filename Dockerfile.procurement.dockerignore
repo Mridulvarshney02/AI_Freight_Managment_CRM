@@ -1,0 +1,13 @@
+# Allow only Python application code and explicit deployment files into this build.
+**
+!app/
+!app/**/
+!app/**/*.py
+!frontend/
+!frontend/**/
+!frontend/**/*.py
+!deploy/
+!deploy/requirements.txt
+!deploy/start.py
+!Dockerfile.procurement
+!Dockerfile.procurement.dockerignore
