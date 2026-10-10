@@ -1,3 +1,11 @@
+# Legacy SQLite utility: do not mutate the retired reference database.
+import os as _os
+from pathlib import Path as _Path
+from dotenv import load_dotenv as _load_dotenv
+_load_dotenv(_Path(__file__).resolve().parents[2] / '.env')
+if _os.getenv('PROCUREMENT_DATABASE_URL', '').strip():
+    raise RuntimeError('This legacy SQLite utility is disabled after PostgreSQL configuration. Use PostgreSQL maintenance tools.')
+
 import sqlite3
 from pathlib import Path
 

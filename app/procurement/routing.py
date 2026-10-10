@@ -1,5 +1,6 @@
 import re
-import sqlite3
+from sqlalchemy import text
+from app.procurement.pg_database import get_engine
 
 
 def key(value):
@@ -79,7 +80,7 @@ def office_labels(value):
     }
 
 
-def add_routing(plan, booking_region, container_type, db_path):
+def add_routing(plan, booking_region, container_type, db_path=None):
     region = key(booking_region)
     equipment = key(container_type).replace(" ", "").upper()
 
@@ -91,27 +92,13 @@ def add_routing(plan, booking_region, container_type, db_path):
             "Use an equipment type such as 20DV or 40HC."
         )
 
-    with sqlite3.connect(
-        db_path.as_uri() + "?mode=ro",
-        uri=True,
-    ) as db:
-        db.row_factory = sqlite3.Row
-
-        contacts = [
-            dict(row)
-            for row in db.execute("""
-                SELECT * FROM shipping_line_contacts
-                ORDER BY source_row
-            """)
-        ]
-
-        names = {
-            row["id"]: row["shipping_line_name"]
-            for row in db.execute("""
-                SELECT id, shipping_line_name
-                FROM procurement_entries
-            """)
-        }
+    with get_engine().connect() as db:
+        contacts = [dict(row) for row in db.execute(text(
+            "SELECT * FROM procurement.shipping_line_contacts ORDER BY source_row, id"
+        )).mappings()]
+        names = dict(db.execute(text(
+            "SELECT id, shipping_line_name FROM procurement.procurement_entries"
+        )).tuples().all())
 
     plan["booking_region"] = booking_region
     plan["container_type"] = equipment

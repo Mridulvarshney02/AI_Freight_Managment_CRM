@@ -1,7 +1,8 @@
 import argparse
 import json
 import re
-import sqlite3
+from sqlalchemy import text
+from app.procurement.pg_database import get_engine
 from pathlib import Path
 from app.procurement.routing import add_routing
 
@@ -15,84 +16,20 @@ def key(value):
 
 
 def setup():
-    with sqlite3.connect(
-        DB_PATH.as_uri() + "?mode=rw", uri=True
-    ) as db:
-        db.execute("BEGIN")
-
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS port_aliases (
-                alias_key TEXT PRIMARY KEY,
-                port_key TEXT NOT NULL
-            )
-        """)
-
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS lane_origin_scope (
-                lane_key TEXT NOT NULL,
-                pol_key TEXT NOT NULL,
-                PRIMARY KEY (lane_key, pol_key)
-            )
-        """)
-
-        db.execute(
-            "INSERT OR IGNORE INTO port_aliases VALUES (?, ?)",
-            ("sokhna", "al sokhna"),
-        )
-
-        lanes = db.execute(
-            "SELECT DISTINCT trade_lane FROM procurement_entries"
-        ).fetchall()
-
-        for (lane,) in lanes:
-            label = key(lane)
-            origins = []
-
-            # Initial origin scope for our current operating ports.
-            if label.startswith("west coast india to "):
-                origins = ["mundra", "nhava sheva"]
-
-            elif label.startswith(("east coast india (", "india (")):
-                match = re.search(r"\(([^)]+)\)", label)
-                if match:
-                    origins = [
-                        key(port)
-                        for port in match.group(1).split("/")
-                    ]
-
-            db.executemany(
-                "INSERT OR IGNORE INTO lane_origin_scope VALUES (?, ?)",
-                [(label, origin) for origin in origins],
-            )
-
-    print("Lookup configuration saved.")
-    print("Procurement and contact records unchanged.")
+    raise RuntimeError("Reference configuration is migrated from SQLite. Do not rerun legacy setup.")
 
 
-def lookup(pol, pod):
-    with sqlite3.connect(
-        DB_PATH.as_uri() + "?mode=ro", uri=True
-    ) as db:
-        db.row_factory = sqlite3.Row
-
-        aliases = dict(db.execute(
-            "SELECT alias_key, port_key FROM port_aliases"
-        ))
-
-        scopes = {
-            tuple(row)
-            for row in db.execute(
-                "SELECT lane_key, pol_key FROM lane_origin_scope"
-            )
-        }
-
-        rows = [
-            dict(row)
-            for row in db.execute("""
-                SELECT * FROM procurement_entries
-                ORDER BY source_row
-            """)
-        ]
+def lookup(pol, pod, *, resolve_missing=False):
+    with get_engine().connect() as db:
+        aliases = dict(db.execute(text(
+            "SELECT alias_key, port_key FROM procurement.port_aliases"
+        )).tuples().all())
+        scopes = set(db.execute(text(
+            "SELECT lane_key, pol_key FROM procurement.lane_origin_scope"
+        )).tuples().all())
+        rows = [dict(row) for row in db.execute(text(
+            "SELECT * FROM procurement.procurement_entries ORDER BY source_row, id"
+        )).mappings()]
 
     def canonical(value):
         result = key(value)
@@ -113,23 +50,50 @@ def lookup(pol, pod):
         return result
 
     def ports(value):
-        value = value or ""
+        text = (value or "").strip()
 
-        # Narrative or qualified coverage needs interpretation.
-        markers = (
-            "no service", "no rates", "no spot",
-            "pending", "not verified", "via ",
-            "@", "(", ")", ":",
-        )
-
-        if any(marker in value.casefold() for marker in markers):
+        if not text:
             return set()
 
-        return {
-            canonical(port)
-            for port in re.split(r"[,;\n]", value)
-            if key(port)
-        }
+        # Keep qualified or negative coverage statements under review.
+        review_markers = (
+            "no service",
+            "no rates",
+            "no spot",
+            "pending",
+            "not verified",
+            "via ",
+            "@",
+        )
+
+        if any(marker in text.casefold() for marker in review_markers):
+            return set()
+
+        # Recognize the section headings present in the HMM workbook cell.
+        # Only remove headings at the beginning of a section.
+        text = re.sub(
+            r"(^|[;\r\n])\s*(?:MED|EUROPE)\s*:\s*",
+            r"\1",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        result = set()
+
+        for part in re.split(r"[,;\r\n]", text):
+            token = part.strip()
+
+            if not token:
+                continue
+
+            # Leave individual qualified entries for later interpretation.
+            # They must not prevent other plain ports from being matched.
+            if any(character in token for character in "():"):
+                continue
+
+            result.add(canonical(token))
+
+        return result
 
     origin = canonical(pol)
     destination = canonical(pod)
@@ -144,6 +108,29 @@ def lookup(pol, pod):
         for row in destination_rows
         if (key(row["trade_lane"]), origin) in scopes
     }
+    port_resolution = None
+
+    if not matching_lanes and resolve_missing:
+        from app.procurement.port_resolver import resolve_port_lane
+
+        eligible_lanes = sorted({
+            row["trade_lane"].strip()
+            for row in rows
+            if row["trade_lane"]
+            and (key(row["trade_lane"]), origin) in scopes
+        })
+
+        port_resolution = resolve_port_lane(
+            pol=pol,
+            pod=pod,
+            eligible_lanes=eligible_lanes,
+        )
+
+        if port_resolution["status"] == "matched":
+            matching_lanes = {
+                key(lane)
+                for lane in port_resolution["trade_lanes"]
+            }
 
     configured_lanes = {scope[0] for scope in scopes}
 
@@ -156,6 +143,7 @@ def lookup(pol, pod):
     result = {
         "pol": pol,
         "pod": pod,
+        "lane_resolution_method": None,
         "resolved_pod": destination,
         "status": (
             "workbook_candidates_found"
@@ -201,13 +189,19 @@ def lookup(pol, pod):
             "ports_covered": row["ports_covered"],
             "remarks": row["remarks"],
         })
-
-    if not matching_lanes:
-        result["next_action"] = (
-            "Investigate port identity and origin/destination coverage; "
-            "no applicable workbook match was found. "
-            "This does not mean no service."
-        )
+    result["lane_resolution_method"] = "workbook" if matching_lanes else None
+    if port_resolution is not None:
+        result["port_resolution"] = port_resolution
+        if port_resolution["status"] == "matched":
+            result["lane_resolution_method"] = "search_assisted"
+        else:
+            result["status"] = port_resolution["status"]
+            result["next_action"] = (
+                port_resolution.get("clarification_question")
+                or port_resolution["explanation"]
+            )
+    elif not matching_lanes:
+        result["next_action"] = "Port or origin scope needs review; this does not mean no service."
 
     return result
 
@@ -241,7 +235,7 @@ if __name__ == "__main__":
                 "Provide both --booking-region and --container-type"
             )
 
-        plan = lookup(args.pol, args.pod)
+        plan = lookup(args.pol, args.pod, resolve_missing=True)
 
         if include_routing:
             try:

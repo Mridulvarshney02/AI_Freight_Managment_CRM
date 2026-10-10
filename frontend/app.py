@@ -1,6 +1,8 @@
 import streamlit as st
 from api import (get_dashboard_stats,get_all_queries,chat_with_ai,)
 import pandas as pd
+from procurement import render_procurement
+
 
 st.set_page_config(
     page_title="AI Freight Management System",
@@ -12,11 +14,12 @@ st.title("🚚 AI Freight Management System")
 
 st.markdown("---")
 
-tab1, tab2, tab3 = st.tabs(
+tab1, tab2, tab3, tab4 = st.tabs(
     [
         "📊 Dashboard",
         "📦 Freight Queries",
         "🤖 AI Assistant",
+        "📋 Procurement"
     ]
 )
 
@@ -79,7 +82,7 @@ with tab2:
         ]
 
         st.dataframe(
-            df[columns_to_show],
+            df.reindex(columns=columns_to_show),
             use_container_width=True,
             hide_index=True,
         )
@@ -140,3 +143,6 @@ with tab3:
                 "content": answer,
             }
         )
+        
+with tab4:
+    render_procurement()        

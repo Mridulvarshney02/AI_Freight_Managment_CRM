@@ -5,7 +5,7 @@ load_dotenv()
 from fastapi import Depends, FastAPI, HTTPException
 from langchain_core.messages import AIMessage, HumanMessage
 from sqlalchemy.orm import Session
-
+from app.procurement.routes import router as procurement_router
 from app import crud
 from app.ai.agent import agent
 from app.database import Base, SessionLocal, engine
@@ -23,6 +23,7 @@ from app.schemas import (
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+app.include_router(procurement_router)
 
 
 def get_db() -> Generator[Session, None, None]:

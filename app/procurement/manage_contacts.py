@@ -1,8 +1,7 @@
 import json
-import sqlite3
-from pathlib import Path
-
-DB_PATH = Path(__file__).resolve().parent / "procurement.db"
+from uuid import uuid4
+from sqlalchemy import text
+from app.procurement.pg_database import get_engine
 
 FIELDS = {
     "shipping_line_name": "Shipping line",
@@ -23,162 +22,53 @@ def key(value):
 
 def save_contact(db, values, source, contact_id=None):
     if not source.strip():
-        raise ValueError("A source or reason for the change is required.")
-
-    for field in ("shipping_line_name", "office_location"):
-        if not key(values[field]):
-            raise ValueError(f"Missing {FIELDS[field]}.")
-
-    if not any(
-        key(values[field]) not in ("", "-")
-        for field in ("email_address", "contact_number")
-    ):
-        raise ValueError("Provide an email address or phone number.")
-
-    db.execute("BEGIN IMMEDIATE")
-
-    try:
-        old = None
-
-        if contact_id is not None:
-            row = db.execute(
-                "SELECT * FROM shipping_line_contacts WHERE id = ?",
-                (contact_id,),
-            ).fetchone()
-
-            if row is None:
-                raise ValueError("Contact ID does not exist.")
-
-            old = dict(row)
-
-        known = {
-            key(row[0])
-            for row in db.execute("""
-                SELECT DISTINCT shipping_line_name
-                FROM procurement_entries
-            """)
-        }
-
-        aliases = dict(db.execute("""
-            SELECT alias_key, procurement_match_key
-            FROM shipping_line_aliases
-        """))
-
-        carrier = key(values["shipping_line_name"])
-        target = aliases.get(carrier, carrier)
-        match = target if target in known else None
-
-        identity_fields = (
-            "booking_agency",
-            "office_location",
-            "contact_person",
-            "email_address",
-            "contact_number",
-        )
-
-        for row in db.execute("SELECT * FROM shipping_line_contacts"):
-            if row["id"] == contact_id:
-                continue
-
-            existing_carrier = (
-                row["procurement_match_key"]
-                or key(row["shipping_line_name"])
-            )
-
-            if (
-                existing_carrier == (match or carrier)
-                and all(
-                    key(row[field]) == key(values[field])
-                    for field in identity_fields
-                )
-            ):
-                raise ValueError(
-                    f"Duplicate of contact ID {row['id']}; "
-                    "update that record instead."
-                )
-
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS contact_changes (
-                id INTEGER PRIMARY KEY,
-                contact_id INTEGER NOT NULL,
-                action TEXT NOT NULL,
-                source_note TEXT NOT NULL,
-                previous_record TEXT,
-                new_record TEXT NOT NULL,
-                changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
+        raise ValueError("Source/change reason is required.")
+    if any(not key(values.get(f)) for f in ("shipping_line_name", "office_location")):
+        raise ValueError("Shipping line and office are required.")
+    if not any(key(values.get(f)) not in ("", "-") for f in ("email_address", "contact_number")):
+        raise ValueError("Provide email or phone.")
+    with db.begin():
+        db.execute(text("SELECT pg_advisory_xact_lock(26092602)"))
+        known={key(r[0]) for r in db.execute(text("SELECT shipping_line_name FROM procurement.procurement_entries"))}
+        aliases=dict(db.execute(text("SELECT alias_key, procurement_match_key FROM procurement.shipping_line_aliases")).tuples().all())
+        carrier=key(values['shipping_line_name'])
+        match=aliases.get(carrier,carrier)
+        match=match if match in known else None
+        old=None
+        rows=db.execute(text("SELECT * FROM procurement.shipping_line_contacts")).mappings().all()
+        for row in rows:
+            if row['id']==contact_id:
+                old=dict(row); continue
+            if (row['procurement_match_key'] or key(row['shipping_line_name']))==(match or carrier) and all(
+                key(row[f])==key(values.get(f)) for f in ('booking_agency','office_location','contact_person','email_address','contact_number')):
+                raise ValueError(f"Duplicate of contact ID {row['id']}.")
+        if contact_id is not None and old is None:
+            raise ValueError("Contact ID does not exist.")
+        data={f:values.get(f) for f in FIELDS}
+        data['procurement_match_key']=match
         if old is None:
-            number = db.execute("""
-                SELECT COALESCE(MAX(source_row), 0) + 1
-                FROM shipping_line_contacts
-                WHERE source_sheet = 'Manual entry'
-            """).fetchone()[0]
-
-            columns = [
-                *FIELDS,
-                "source_sheet",
-                "source_row",
-                "procurement_match_key",
-            ]
-            payload = [
-                values[field] for field in FIELDS
-            ] + ["Manual entry", number, match]
-
-            placeholders = ", ".join("?" for _ in columns)
-
-            cursor = db.execute(
-                f"INSERT INTO shipping_line_contacts "
-                f"({', '.join(columns)}) VALUES ({placeholders})",
-                payload,
-            )
-            contact_id = cursor.lastrowid
-
+            # UUID source label prevents collisions with workbook rows and other editors.
+            data.update(source_sheet='Manual '+str(uuid4()),source_row=1)
+            cols=', '.join(data); params=', '.join(':'+f for f in data)
+            contact_id=db.execute(text(f"INSERT INTO procurement.shipping_line_contacts ({cols}) VALUES ({params}) RETURNING id"),data).scalar_one()
         else:
-            assignments = ", ".join(
-                f"{field} = ?" for field in FIELDS
-            )
-
-            db.execute(
-                f"UPDATE shipping_line_contacts SET {assignments}, "
-                "procurement_match_key = ? WHERE id = ?",
-                [values[field] for field in FIELDS]
-                + [match, contact_id],
-            )
-
-        new = dict(db.execute(
-            "SELECT * FROM shipping_line_contacts WHERE id = ?",
-            (contact_id,),
-        ).fetchone())
-
-        db.execute("""
-            INSERT INTO contact_changes (
-                contact_id, action, source_note,
-                previous_record, new_record
-            ) VALUES (?, ?, ?, ?, ?)
-        """, (
-            contact_id,
-            "update" if old else "add",
-            source.strip(),
-            json.dumps(old, ensure_ascii=False) if old else None,
-            json.dumps(new, ensure_ascii=False),
-        ))
-
-        db.commit()
-        return contact_id, match
-
-    except Exception:
-        db.rollback()
-        raise
+            assignments=', '.join(f"{f}=:{f}" for f in data)
+            db.execute(text(f"UPDATE procurement.shipping_line_contacts SET {assignments} WHERE id=:contact_id"),{**data,'contact_id':contact_id})
+        new=dict(db.execute(text("SELECT * FROM procurement.shipping_line_contacts WHERE id=:id"),{'id':contact_id}).mappings().one())
+        db.execute(text("""CREATE TABLE IF NOT EXISTS procurement.contact_changes (
+            id SERIAL PRIMARY KEY, contact_id INTEGER NOT NULL, action TEXT NOT NULL,
+            source_note TEXT NOT NULL, previous_record TEXT, new_record TEXT NOT NULL,
+            changed_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP::text))"""))
+        db.execute(text("""INSERT INTO procurement.contact_changes
+            (contact_id,action,source_note,previous_record,new_record)
+            VALUES (:id,:action,:source,:old,:new)"""),{
+                'id':contact_id,'action':'update' if old else 'add','source':source.strip(),
+                'old':json.dumps(old,ensure_ascii=False) if old else None,'new':json.dumps(new,ensure_ascii=False)})
+    return contact_id,match
 
 
 def main():
-    with sqlite3.connect(
-        DB_PATH.as_uri() + "?mode=rw",
-        uri=True,
-    ) as db:
-        db.row_factory = sqlite3.Row
+    with get_engine().connect() as db:
 
         action = input("Action (list/add/update): ").strip().lower()
 
@@ -187,9 +77,7 @@ def main():
                 "Shipping-line name filter (blank = all): "
             ))
 
-            for row in db.execute(
-                "SELECT * FROM shipping_line_contacts ORDER BY id"
-            ):
+            for row in db.execute(text("SELECT * FROM procurement.shipping_line_contacts ORDER BY id")).mappings():
                 if search in key(row["shipping_line_name"]):
                     print(
                         row["id"],
@@ -211,10 +99,7 @@ def main():
         if action == "update":
             contact_id = int(input("Contact ID: "))
 
-            row = db.execute(
-                "SELECT * FROM shipping_line_contacts WHERE id = ?",
-                (contact_id,),
-            ).fetchone()
+            row = db.execute(text("SELECT * FROM procurement.shipping_line_contacts WHERE id = :id"), {"id": contact_id}).mappings().first()
 
             if row is None:
                 raise ValueError("Contact ID does not exist.")
@@ -239,6 +124,7 @@ def main():
             "Source/change reason (include your name): "
         )
 
+        db.rollback()  # End read transaction before the atomic update.
         contact_id, match = save_contact(
             db, values, source, contact_id
         )
@@ -253,5 +139,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, sqlite3.Error) as exc:
+    except ValueError as exc:
         raise SystemExit(f"Not saved: {exc}")
