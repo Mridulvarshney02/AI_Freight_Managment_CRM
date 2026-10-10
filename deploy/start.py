@@ -101,5 +101,32 @@ if __name__ == '__main__':
         if isinstance(exc, RuntimeError):
             print(str(exc), file=sys.stderr)
         else:
-            print('Startup failed: ' + type(exc).__name__ + '. Check configuration and database access.', file=sys.stderr)
-        sys.exit(1)
+            original = getattr(exc, "orig", exc)
+            message = str(original).lower()
+
+            checks = [
+                (("password authentication failed",), "Database username/password rejected."),
+                (("could not translate host name", "name or service not known"),
+                "Database hostname could not be resolved."),
+                (("timeout expired", "connection timed out"),
+                "Database connection timed out; check network access and URL."),
+                (("connection refused",), "Database host refused the connection."),
+                (("does not exist",), "The database name or role does not exist."),
+                (("no pg_hba.conf entry",), "Database access rules rejected the connection."),
+                (("ssl", "certificate"), "TLS/SSL connection failed."),
+                (("server closed the connection",), "Database server closed the connection."),
+            ]
+
+            reason = next(
+                (
+                    description
+                    for patterns, description in checks
+                    if any(pattern in message for pattern in patterns)
+                ),
+                "Unclassified database connection error.",
+            )
+
+            print(
+                f"Startup failed: {type(original).__name__}. {reason}",
+                file=sys.stderr,
+            )
