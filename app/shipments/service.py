@@ -1,5 +1,5 @@
 from uuid import uuid4
-from sqlalchemy import select, update, func, or_
+from sqlalchemy import select, update, func, or_, case, cast, Numeric
 from app.shipments.store import get_engine, shipments, history
 from app.shipments.fields import FIELDS, review_flags
 
@@ -29,9 +29,22 @@ def list_shipments(search='',offset=0,limit=100):
         condition = or_(*[shipments.c[k].ilike('%'+term+'%',escape='\\') for k in FIELDS])
         query = query.where(condition)
         count = count.where(condition)
+    # Sort the entire result before pagination, not only the visible page.
+    serial = func.trim(shipments.c.source_serial)
+    numeric_serial = case(
+        (serial.op('~')(r'^[0-9]+([.][0-9]+)?$'), cast(serial, Numeric)),
+        else_=None,
+    )
+    ordering = (
+        numeric_serial.asc().nulls_last(),
+        func.nullif(serial, '').asc().nulls_last(),
+        shipments.c.source_row.asc().nulls_last(),
+        shipments.c.created_at.asc(),
+        shipments.c.id.asc(),
+    )
     with get_engine().connect() as conn:
         return {'total':conn.scalar(count),'items':[output(r) for r in conn.execute(
-            query.order_by(shipments.c.created_at.desc(),shipments.c.id).offset(offset).limit(limit)).mappings()]}
+            query.order_by(*ordering).offset(offset).limit(limit)).mappings()]}
 
 def get_shipment(shipment_id):
     with get_engine().connect() as conn:

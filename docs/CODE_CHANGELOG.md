@@ -1,3 +1,9 @@
+# Serial-number ordering fix — 24 October 2026
+
+Required correction: the hosted shipment list previously sorted by creation timestamp and UUID. Imported records shared their creation time, so they did not appear in workbook serial order.
+
+Changed `app/shipments/service.py`, `list_shipments()`: numeric serial values sort ascending before pagination. Numeric text such as 2 and 10 now sorts numerically. Nonnumeric serials follow numeric values, with blank/missing serials last. Equal serial labels use original workbook row, then creation time and UUID as stable tie-breakers. Search results and the shipment selector share this ordering. Records are neither renumbered nor merged. No data import or database migration is needed.
+
 # Shipment operations update — 21 October 2026
 
 ## Scope and status
@@ -132,3 +138,5 @@ Migration behavior: dry-run is the default; apply requires `--apply`. It takes a
 Scope limitation: this is not the combined application patch. Do not change the live startup or CRM DATABASE_URL yet. Do not apply the data migration while staff continue editing SQLite, as later SQLite changes would not be synchronized.
 
 Verification details are in START_HERE.md. Actual company data and the user's Render deployment have not been accessed. Missing AI/deployment files remain necessary to preserve the original assistant and the successful deployment settings.
+
+Serial-order patch validation: Python syntax compilation passed. No live database or deployment verification performed.

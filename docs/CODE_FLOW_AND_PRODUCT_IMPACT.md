@@ -1,3 +1,16 @@
+# Serial-number ordering flow — 24 October 2026
+
+```mermaid
+flowchart TD
+    A["Open shipments or search"] --> B["Filter matching PostgreSQL records"]
+    B --> C["Sort numerically by workbook serial"]
+    C --> D["Resolve ties using source row and stable ID"]
+    D --> E["Apply page offset and limit"]
+    E --> F["Display table and selection list"]
+```
+
+The change is in `app/shipments/service.py`, before pagination. Staff see shipments in serial-number order across pages. Duplicate serials remain separate. Missing serials appear at the end. No saved shipment values, frontend editing logic or procurement workflow changes.
+
 # Code flow and product impact — 21 October 2026
 
 This patch is implemented and locally tested, not yet deployed. Only Shipment Sheet is in scope.
