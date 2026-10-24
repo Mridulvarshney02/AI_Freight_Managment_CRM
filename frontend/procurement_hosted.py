@@ -1,17 +1,20 @@
 """Password-gated entry point for the hosted procurement application."""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import os
 import secrets
 import time
 import streamlit as st
 
-st.set_page_config(page_title='Freight Procurement', page_icon='🚢', layout='wide')
+st.set_page_config(page_title='Freight Operations', page_icon='🚢', layout='wide')
 expected = os.getenv('PROCUREMENT_TEAM_PASSWORD', '')
 if len(expected) < 24:
     st.error('Application access is not configured. Contact the administrator.')
     st.stop()
 
 if not st.session_state.get('team_authenticated', False):
-    st.title('Freight Procurement')
+    st.title('Freight Operations')
     st.caption('Company team access')
     with st.form('team_login'):
         supplied = st.text_input('Team password', type='password')
@@ -31,11 +34,11 @@ if time.time() - st.session_state.get('team_authenticated_at', 0) > 8 * 3600:
     st.rerun()
 
 with st.sidebar:
-    st.caption('Company procurement workspace')
+    st.caption('Company operations workspace')
     if st.button('Sign out'):
         st.session_state.clear()
         st.rerun()
 
 # Import only after authentication: no procurement data loaded for anonymous users.
-from procurement import render_procurement
-render_procurement()
+from shipments import render_operations
+render_operations()

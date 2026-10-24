@@ -22,13 +22,18 @@ def check_config():
 
 def check_database():
     # Read-only validation. Never automatically migrate or recreate the database.
-    from sqlalchemy import text
+    from sqlalchemy import text, inspect
     from app.procurement.pg_database import get_engine
     tables = ('procurement_entries', 'shipping_line_contacts', 'shipping_line_aliases',
               'port_aliases', 'lane_origin_scope', 'requests', 'request_destinations', 'drafts')
     with get_engine().connect() as conn:
         for table in tables:
             conn.execute(text('SELECT 1 FROM procurement.' + table + ' LIMIT 1'))
+    with get_engine().connect() as conn:
+        for table in ('shipments', 'shipment_history', 'shipment_imports'):
+            if not inspect(conn).has_table(table, schema='operations'):
+                raise RuntimeError('Shipment tables are missing. Run the Shipment Sheet importer with --apply before deploying this update.')
+            conn.execute(text('SELECT 1 FROM operations.' + table + ' LIMIT 1'))
     get_engine().dispose()
 
 
@@ -53,7 +58,7 @@ def main():
     signal.signal(signal.SIGINT, stop)
     try:
         children.append(subprocess.Popen([sys.executable, '-m', 'uvicorn',
-            'app.procurement.demo_api:app', '--host', '127.0.0.1', '--port', '8000',
+            'app.operations_api:app', '--host', '127.0.0.1', '--port', '8000',
             '--no-access-log']))
         deadline = time.monotonic() + 60
         ready = False
